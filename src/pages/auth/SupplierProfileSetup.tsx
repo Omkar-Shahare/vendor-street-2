@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { auth } from "../../lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ const SupplierProfileSetup: React.FC = () => {
   const { toast } = useToast();
   const { setProfileCompleted } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [existingProfileId, setExistingProfileId] = useState<number | null>(null);
+  const [existingProfileId, setExistingProfileId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [formData, setFormData] = useState({
     fullName: "",
@@ -48,68 +48,83 @@ const SupplierProfileSetup: React.FC = () => {
     exportLicense: ""
   });
 
-  // Get user's phone number from Firebase Auth if available and fetch existing profile
   useEffect(() => {
     console.log("SupplierProfileSetup component mounted");
-    const user = auth.currentUser;
-    console.log("Current user:", user ? user.uid : "No user");
-    
-    const fetchExistingProfile = async () => {
-      if (user?.uid) {
-        try {
-          console.log("Fetching existing supplier profile for UID:", user.uid);
-          const response = await supplierApi.getByUserId(user.uid);
-          console.log("Existing supplier profile found:", response.supplier);
-          
-          // Pre-fill form with existing profile data
-          const profile = response.supplier;
-          setExistingProfileId(profile.id || null);
+
+    const initializeProfile = async () => {
+      const { data: { user }, error } = await supabase.auth.getUser();
+      console.log("Current user:", user ? user.id : "No user");
+
+      if (error || !user) {
+        console.error("No authenticated user found");
+        navigate("/supplier/login");
+        return;
+      }
+
+      try {
+        console.log("Fetching existing supplier profile for user ID:", user.id);
+        const { data: existingProfile, error: profileError } = await supabase
+          .from('suppliers')
+          .select('*')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (existingProfile) {
+          console.log("Existing supplier profile found:", existingProfile);
+          setExistingProfileId(existingProfile.id);
           setIsEditMode(true);
+
           setFormData({
-            fullName: profile.fullName || "",
-            mobileNumber: profile.mobileNumber || user.phoneNumber || "",
-            languagePreference: profile.languagePreference || "",
-            businessName: profile.businessName || "",
-            businessAddress: profile.businessAddress || "",
-            city: profile.city || "",
-            pincode: profile.pincode || "",
-            state: profile.state || "",
-            businessType: profile.businessType || "",
-            supplyCapabilities: profile.supplyCapabilities || [],
-            preferredDeliveryTime: profile.preferredDeliveryTime || "",
-            latitude: profile.latitude || "",
-            longitude: profile.longitude || "",
-            // Additional Business Information
-            gstNumber: profile.gstNumber || "",
-            licenseNumber: profile.licenseNumber || "",
-            yearsInBusiness: profile.yearsInBusiness || "",
-            employeeCount: profile.employeeCount || "",
-            // Additional Contact Information
-            primaryEmail: profile.primaryEmail || "",
-            whatsappBusiness: profile.whatsappBusiness || "",
-            // Certifications
-            foodSafetyLicense: profile.foodSafetyLicense || "",
-            organicCertification: profile.organicCertification || "",
-            isoCertification: profile.isoCertification || "",
-            exportLicense: profile.exportLicense || ""
+            fullName: existingProfile.owner_name || "",
+            mobileNumber: existingProfile.phone || user.phone || "",
+            languagePreference: "",
+            businessName: existingProfile.business_name || "",
+            businessAddress: existingProfile.address || "",
+            city: existingProfile.city || "",
+            pincode: existingProfile.pincode || "",
+            state: existingProfile.state || "",
+            businessType: "",
+            supplyCapabilities: [],
+            preferredDeliveryTime: "",
+            latitude: "",
+            longitude: "",
+            gstNumber: existingProfile.gst_number || "",
+            licenseNumber: existingProfile.fssai_license || "",
+            yearsInBusiness: "",
+            employeeCount: "",
+            primaryEmail: existingProfile.email || "",
+            whatsappBusiness: "",
+            foodSafetyLicense: "",
+            organicCertification: "",
+            isoCertification: "",
+            exportLicense: ""
           });
-          
+
           toast({
             title: "Profile Loaded",
             description: "Your existing profile data has been loaded for editing.",
           });
-          
-        } catch (error) {
-          console.log("No existing profile found or error fetching profile:", error);
-          // Profile doesn't exist yet, just set phone number if available
-          if (user?.phoneNumber) {
-            setFormData(prev => ({ ...prev, mobileNumber: user.phoneNumber }));
+        } else {
+          console.log("No existing profile found");
+          if (user.phone) {
+            setFormData(prev => ({ ...prev, mobileNumber: user.phone }));
+          }
+          if (user.email) {
+            setFormData(prev => ({ ...prev, primaryEmail: user.email }));
+          }
+          if (user.user_metadata?.name || user.user_metadata?.full_name) {
+            setFormData(prev => ({
+              ...prev,
+              fullName: user.user_metadata.name || user.user_metadata.full_name
+            }));
           }
         }
+      } catch (error) {
+        console.error("Error fetching profile:", error);
       }
     };
 
-    fetchExistingProfile();
+    initializeProfile();
   }, [toast]);
 
   const handleInputChange = (field: string, value: string | string[]) => {
@@ -152,24 +167,16 @@ const SupplierProfileSetup: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validation with detailed missing fields
+
     const requiredFields = [
       { key: 'fullName', label: 'Full Name' },
       { key: 'mobileNumber', label: 'Mobile Number' },
-      { key: 'languagePreference', label: 'Language Preference' },
       { key: 'businessAddress', label: 'Business Address' },
       { key: 'city', label: 'City' },
       { key: 'pincode', label: 'Pincode' },
       { key: 'state', label: 'State' },
-      { key: 'businessType', label: 'Business Type' },
-      { key: 'supplyCapabilities', label: 'Supply Capabilities', isArray: true },
-      { key: 'preferredDeliveryTime', label: 'Preferred Delivery Time' },
     ];
-    const missing = requiredFields.filter(f => {
-      if (f.isArray) return (formData[f.key] as string[]).length === 0;
-      return !formData[f.key];
-    });
+    const missing = requiredFields.filter(f => !formData[f.key]);
     if (missing.length > 0) {
       toast({
         title: "Missing Information",
@@ -182,74 +189,70 @@ const SupplierProfileSetup: React.FC = () => {
     setLoading(true);
 
     try {
-      // Get current user from Firebase auth
-      const currentUser = auth.currentUser;
-      if (!currentUser) {
-        toast({
-          title: "Authentication Error",
-          description: "Please log in again to complete your profile.",
-          variant: "destructive"
-        });
-        return;
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error("No authenticated user found");
       }
 
-      // Save the profile data using our API service
-      let result;
       const profileData = {
-        firebaseUserId: currentUser.uid, // Add Firebase UID
-        fullName: formData.fullName,
-        mobileNumber: formData.mobileNumber,
-        languagePreference: formData.languagePreference,
-        businessName: formData.businessName,
-        businessAddress: formData.businessAddress,
+        user_id: user.id,
+        business_name: formData.businessName || formData.fullName + "'s Business",
+        owner_name: formData.fullName,
+        phone: formData.mobileNumber,
+        email: formData.primaryEmail || user.email || "",
+        address: formData.businessAddress,
         city: formData.city,
-        pincode: formData.pincode,
         state: formData.state,
-        businessType: formData.businessType,
-        supplyCapabilities: formData.supplyCapabilities,
-        preferredDeliveryTime: formData.preferredDeliveryTime,
-        latitude: formData.latitude,
-        longitude: formData.longitude,
-        // Additional Business Information
-        gstNumber: formData.gstNumber,
-        licenseNumber: formData.licenseNumber,
-        yearsInBusiness: formData.yearsInBusiness,
-        employeeCount: formData.employeeCount,
-        // Additional Contact Information
-        primaryEmail: formData.primaryEmail,
-        whatsappBusiness: formData.whatsappBusiness,
-        // Certifications
-        foodSafetyLicense: formData.foodSafetyLicense,
-        organicCertification: formData.organicCertification,
-        isoCertification: formData.isoCertification,
-        exportLicense: formData.exportLicense
+        pincode: formData.pincode,
+        gst_number: formData.gstNumber || null,
+        fssai_license: formData.licenseNumber || null,
+        rating: 0,
+        total_reviews: 0
       };
 
+      let result;
       if (isEditMode && existingProfileId) {
-        result = await supplierApi.update(existingProfileId, profileData);
-        console.log('Supplier profile updated:', result);
+        console.log("Updating existing supplier profile");
+        const { data, error } = await supabase
+          .from('suppliers')
+          .update(profileData)
+          .eq('id', existingProfileId)
+          .select()
+          .single();
+
+        if (error) throw error;
+        result = data;
+
+        toast({
+          title: "Profile Updated!",
+          description: "Your supplier profile has been updated successfully.",
+        });
       } else {
-        result = await supplierApi.create(profileData);
-        console.log('Supplier profile created:', result);
+        console.log("Creating new supplier profile");
+        const { data, error } = await supabase
+          .from('suppliers')
+          .insert([profileData])
+          .select()
+          .single();
+
+        if (error) throw error;
+        result = data;
+
+        toast({
+          title: "Profile Created!",
+          description: "Your supplier profile has been created successfully.",
+        });
       }
 
-      // Set profile as completed
       setProfileCompleted(true);
-
-      toast({
-        title: isEditMode ? "Profile Updated!" : "Profile Setup Complete!",
-        description: isEditMode 
-          ? "Your supplier profile has been updated successfully."
-          : "Your supplier profile has been created successfully.",
-      });
-
-      // Redirect to supplier dashboard
       navigate("/supplier/dashboard");
     } catch (error) {
       console.error('Error saving supplier profile:', error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save profile. Please try again.",
+        description: error instanceof Error
+          ? error.message
+          : "Failed to save profile. Please try again.",
         variant: "destructive"
       });
     } finally {

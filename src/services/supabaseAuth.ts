@@ -14,6 +14,10 @@ export interface SignInData {
   password: string;
 }
 
+export interface GoogleSignInOptions {
+  userType: 'vendor' | 'supplier';
+}
+
 export const authService = {
   signUp: async ({ email, password, metadata }: SignUpData) => {
     const { data, error } = await supabase.auth.signUp({
@@ -67,5 +71,28 @@ export const authService = {
       password: newPassword,
     });
     if (error) throw error;
+  },
+
+  signInWithGoogle: async ({ userType }: GoogleSignInOptions) => {
+    const redirectUrl = `${window.location.origin}/auth/callback`;
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: redirectUrl,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+        scopes: 'email profile',
+      },
+    });
+
+    if (error) throw error;
+
+    if (userType) {
+      localStorage.setItem('pendingUserType', userType);
+    }
+
+    return data;
   },
 };

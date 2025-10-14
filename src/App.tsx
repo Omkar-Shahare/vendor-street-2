@@ -8,6 +8,7 @@ import VendorAuth from "./pages/auth/VendorAuth";
 import SupplierAuth from "./pages/auth/SupplierAuth";
 import VendorProfileSetup from "./pages/auth/VendorProfileSetup";
 import SupplierProfileSetup from "./pages/auth/SupplierProfileSetup";
+import AuthCallback from "./pages/auth/AuthCallback";
 import VendorDashboard from "./pages/vendor/VendorDashboard";
 import SupplierDashboard from "./pages/supplier/SupplierDashboard";
 import SupplierDetails from "./pages/vendor/SupplierDetails";
@@ -30,9 +31,11 @@ const App = () => (
           <ConvAIChatbot />
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/vendor/login" element={<VendorAuth />} />
             <Route path="/vendor/signup" element={<VendorAuth />} />
             <Route path="/supplier/login" element={<SupplierAuth />} />
+            <Route path="/supplier/signup" element={<SupplierAuth />} />
             <Route path="/vendor/profile-setup" element={<VendorProfileSetup />} />
             <Route path="/supplier/profile-setup" element={<SupplierProfileSetup />} />
             <Route path="/vendor/dashboard" element={<VendorDashboard />} />

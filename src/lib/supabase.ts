@@ -12,6 +12,9 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: true
+    detectSessionInUrl: true,
+    flowType: 'pkce'
   }
 });
+
+export const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
