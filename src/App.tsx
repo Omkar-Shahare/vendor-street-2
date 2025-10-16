@@ -36,6 +36,8 @@ const App = () => (
             <Route path="/vendor/signup" element={<VendorAuth />} />
             <Route path="/supplier/login" element={<SupplierAuth />} />
             <Route path="/supplier/signup" element={<SupplierAuth />} />
+            <Route path="/supplier/auth" element={<SupplierAuth />} />
+            <Route path="/vendor/auth" element={<VendorAuth />} />
             <Route path="/vendor/profile-setup" element={<VendorProfileSetup />} />
             <Route path="/supplier/profile-setup" element={<SupplierProfileSetup />} />
             <Route path="/vendor/dashboard" element={<VendorDashboard />} />
