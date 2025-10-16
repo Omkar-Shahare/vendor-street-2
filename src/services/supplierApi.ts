@@ -1,9 +1,8 @@
-import { api } from './api';
+import { supabase } from '../lib/supabase';
 
-// Supplier-related types
 export interface SupplierProfile {
-  id?: number;
-  firebaseUserId?: string;
+  id?: string;
+  user_id?: string;
   fullName: string;
   mobileNumber: string;
   languagePreference: string;
@@ -17,116 +16,92 @@ export interface SupplierProfile {
   preferredDeliveryTime: string;
   latitude?: string;
   longitude?: string;
-  // Additional Business Information
   gstNumber?: string;
   licenseNumber?: string;
   yearsInBusiness?: string;
   employeeCount?: string;
-  // Contact Information
   primaryEmail?: string;
   whatsappBusiness?: string;
-  // Certifications
   foodSafetyLicense?: string;
   organicCertification?: string;
   isoCertification?: string;
   exportLicense?: string;
+  rating?: number;
+  total_reviews?: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
-export interface SupplierResponse {
-  message: string;
-  supplierId: number;
-  data: SupplierProfile;
+export interface ApiError extends Error {
+  status?: number;
 }
 
-export interface SupplierListResponse {
-  suppliers: SupplierProfile[];
-  total: number;
-}
-
-export interface SupplierProduct {
-  id?: number;
-  supplierId: number;
-  productName: string;
-  category: string;
-  pricePerKg: number;
-  availableQuantity: number;
-  unit: string;
-  description?: string;
-  imageUrl?: string;
-}
-
-export interface ProductListResponse {
-  products: SupplierProduct[];
-  total: number;
-}
-
-// Supplier API functions
 export const supplierApi = {
-  // Create a new supplier profile
-  create: async (supplierData: Omit<SupplierProfile, 'id'>): Promise<SupplierResponse> => {
-    return api.post('/suppliers', supplierData);
+  getByUserId: async (userId: string): Promise<{ supplier: SupplierProfile }> => {
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) {
+      const apiError: ApiError = new Error(error.message);
+      apiError.status = error.code === 'PGRST116' ? 404 : 500;
+      throw apiError;
+    }
+
+    if (!data) {
+      const apiError: ApiError = new Error('Supplier profile not found');
+      apiError.status = 404;
+      throw apiError;
+    }
+
+    return { supplier: data as SupplierProfile };
   },
 
-  // Get all suppliers
-  getAll: async (): Promise<SupplierListResponse> => {
-    return api.get('/suppliers');
+  getById: async (id: string): Promise<{ supplier: SupplierProfile }> => {
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) throw new Error('Supplier not found');
+
+    return { supplier: data as SupplierProfile };
   },
 
-  // Get supplier by ID
-  getById: async (id: number): Promise<{ supplier: SupplierProfile }> => {
-    return api.get(`/suppliers/${id}`);
+  getAll: async (): Promise<{ suppliers: SupplierProfile[] }> => {
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('*')
+      .order('rating', { ascending: false });
+
+    if (error) throw error;
+    return { suppliers: data as SupplierProfile[] };
   },
 
-  // Get supplier by Firebase user ID
-  getByUserId: async (firebaseUserId: string): Promise<{ supplier: SupplierProfile }> => {
-    return api.get(`/suppliers/by-user/${firebaseUserId}`);
+  update: async (id: string, supplierData: Partial<SupplierProfile>): Promise<{ supplier: SupplierProfile }> => {
+    const { data, error } = await supabase
+      .from('suppliers')
+      .update(supplierData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { supplier: data as SupplierProfile };
   },
 
-  // Update supplier profile
-  update: async (id: number, supplierData: Partial<SupplierProfile>): Promise<SupplierResponse> => {
-    return api.put(`/suppliers/${id}`, supplierData);
-  },
+  searchByCity: async (city: string): Promise<{ suppliers: SupplierProfile[] }> => {
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('*')
+      .ilike('city', `%${city}%`)
+      .order('rating', { ascending: false });
 
-  // Delete supplier
-  delete: async (id: number): Promise<{ message: string }> => {
-    return api.delete(`/suppliers/${id}`);
-  },
-
-  // Search suppliers by location or other criteria
-  search: async (params: {
-    city?: string;
-    state?: string;
-    businessType?: string;
-    supplyCapability?: string;
-  }): Promise<SupplierListResponse> => {
-    const queryParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value) queryParams.append(key, value);
-    });
-    
-    const queryString = queryParams.toString();
-    const endpoint = queryString ? `/suppliers/search?${queryString}` : '/suppliers';
-    
-    return api.get(endpoint);
-  },
-
-  // Get supplier products
-  getProducts: async (supplierId: number): Promise<ProductListResponse> => {
-    return api.get(`/suppliers/${supplierId}/products`);
-  },
-
-  // Add product to supplier
-  addProduct: async (supplierId: number, productData: Omit<SupplierProduct, 'id' | 'supplierId'>): Promise<{ message: string; productId: number }> => {
-    return api.post(`/suppliers/${supplierId}/products`, productData);
-  },
-
-  // Update product
-  updateProduct: async (supplierId: number, productId: number, productData: Partial<SupplierProduct>): Promise<{ message: string }> => {
-    return api.put(`/suppliers/${supplierId}/products/${productId}`, productData);
-  },
-
-  // Delete product
-  deleteProduct: async (supplierId: number, productId: number): Promise<{ message: string }> => {
-    return api.delete(`/suppliers/${supplierId}/products/${productId}`);
+    if (error) throw error;
+    return { suppliers: data as SupplierProfile[] };
   }
 };

@@ -7,6 +7,7 @@ import { Package, Users, TrendingUp, Clock, MapPin, CheckCircle, XCircle, Plus, 
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import { fetchProductGroups, createProductGroup, updateProductGroupStatus } from "@/lib/productGroupApi";
 import { supplierApi, SupplierProfile } from "@/services/supplierApi";
 import { orderApi } from "@/services/orderApi";
@@ -72,27 +73,26 @@ const SupplierDashboard = () => {
   // Fetch supplier profile data
   useEffect(() => {
     const fetchSupplierProfile = async () => {
-      if (!user?.uid) {
-        console.log('No user UID available - redirecting to auth');
-        navigate('/supplier/auth');
+      if (!user?.id) {
+        console.log('No user ID available - redirecting to auth');
+        navigate('/supplier/login');
         return;
       }
 
-      console.log('🔍 Current Firebase User UID:', user.uid);
-      console.log('🔍 Current Firebase User Email:', user.email);
+      console.log('🔍 Current Supabase User ID:', user.id);
+      console.log('🔍 Current Supabase User Email:', user.email);
 
       try {
-        console.log('Fetching supplier profile for UID:', user.uid);
-        const response = await supplierApi.getByUserId(user.uid);
+        console.log('Fetching supplier profile for user ID:', user.id);
+        const response = await supplierApi.getByUserId(user.id);
         console.log('Supplier profile response:', response);
         const profile = response.supplier;
         console.log('Supplier profile data:', profile);
         setSupplierData(profile);
-        setEditFormData(profile); // Initialize edit form with loaded data
-      } catch (error) {
+        setEditFormData(profile);
+      } catch (error: any) {
         console.error('Error fetching supplier profile:', error);
-        
-        // If profile not found, redirect to profile setup
+
         if (error.message?.includes('not found') || error.status === 404) {
           toast({
             title: "Profile Setup Required",
@@ -101,15 +101,13 @@ const SupplierDashboard = () => {
           });
           navigate('/supplier/profile-setup');
         } else {
-          // For other errors, show error message
           toast({
             title: "Error",
             description: `Failed to load profile data: ${error.message || 'Unknown error'}`,
             variant: "destructive"
           });
-          // Optionally redirect to auth if there's an authentication issue
           if (error.status === 401 || error.status === 403) {
-            navigate('/supplier/auth');
+            navigate('/supplier/login');
           }
         }
       } finally {
@@ -120,16 +118,15 @@ const SupplierDashboard = () => {
     fetchSupplierProfile();
   }, [user, toast, navigate]);
 
-  // Fetch product groups from backend
+  // Fetch product groups with real-time updates
   useEffect(() => {
-    const loadGroups = async () => {
-      if (!supplierData?.id) {
-        console.log('No supplier data available, skipping group fetch');
-        return;
-      }
+    if (!supplierData?.id) {
+      console.log('No supplier data available, skipping group fetch');
+      return;
+    }
 
+    const loadGroups = async () => {
       try {
-        // Only fetch groups created by this supplier
         const groups = await fetchProductGroups({ created_by: supplierData.id });
         setGroupRequests(groups);
       } catch (err) {
@@ -141,8 +138,30 @@ const SupplierDashboard = () => {
         });
       }
     };
+
     loadGroups();
-  }, [supplierData, toast]); // Add supplierData as dependency
+
+    const subscription = supabase
+      .channel('product_groups_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'product_groups',
+          filter: `created_by=eq.${supplierData.id}`
+        },
+        (payload) => {
+          console.log('Product group change detected:', payload);
+          loadGroups();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [supplierData, toast]);
 
   const checkLocationPermission = async () => {
     if (!navigator.geolocation) {
@@ -444,22 +463,20 @@ const SupplierDashboard = () => {
     );
   };
 
-  // Fetch individual and confirmed orders
+  // Fetch orders with real-time updates
   useEffect(() => {
+    if (!supplierData?.id) {
+      return;
+    }
+
     const fetchSupplierOrders = async () => {
       try {
-        if (!supplierData?.id) {
-          return;
-        }
-
         console.log('Fetching orders for supplier:', supplierData.id);
-        
-        // Fetch orders assigned to this specific supplier only
+
         const supplierOrdersResponse = await orderApi.getBySupplierId(supplierData.id);
         console.log('Supplier orders response:', supplierOrdersResponse);
         console.log('Total orders found:', supplierOrdersResponse.orders?.length || 0);
-        
-        // DEBUG: Log all orders with their status
+
         if (supplierOrdersResponse.orders) {
           supplierOrdersResponse.orders.forEach((order, index) => {
             console.log(`Order ${index + 1}:`, {
@@ -471,20 +488,16 @@ const SupplierDashboard = () => {
             });
           });
         }
-        
-        // TEMPORARY: Show ALL orders assigned to this supplier for debugging
+
         const relevantOrders = supplierOrdersResponse.orders || [];
-        
-        // Use the same data for both tabs since both show orders assigned to this supplier
         const allSupplierOrders = supplierOrdersResponse.orders;
-        
-        // Transform relevant orders for Individual Orders tab
+
         const transformedIndividualOrders = relevantOrders.map(order => {
           const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
-          const customerDetails = order.customer_details ? 
-            (typeof order.customer_details === 'string' ? JSON.parse(order.customer_details) : order.customer_details) 
+          const customerDetails = order.customer_details ?
+            (typeof order.customer_details === 'string' ? JSON.parse(order.customer_details) : order.customer_details)
             : null;
-            
+
           return {
             id: order.id,
             product: items && items.length > 0 ? items[0].name : 'Unknown Product',
@@ -505,13 +518,12 @@ const SupplierDashboard = () => {
           };
         });
 
-        // Transform confirmed orders for Order History tab
         const transformedConfirmedOrders = allSupplierOrders.map(order => {
           const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
-          const customerDetails = order.customer_details ? 
-            (typeof order.customer_details === 'string' ? JSON.parse(order.customer_details) : order.customer_details) 
+          const customerDetails = order.customer_details ?
+            (typeof order.customer_details === 'string' ? JSON.parse(order.customer_details) : order.customer_details)
             : null;
-            
+
           return {
             id: order.id,
             product: items && items.length > 0 ? items[0].name : 'Unknown Product',
@@ -542,6 +554,27 @@ const SupplierDashboard = () => {
     };
 
     fetchSupplierOrders();
+
+    const subscription = supabase
+      .channel('orders_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+          filter: `supplier_id=eq.${supplierData.id}`
+        },
+        (payload) => {
+          console.log('Order change detected:', payload);
+          fetchSupplierOrders();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [supplierData, toast]);
 
   return (

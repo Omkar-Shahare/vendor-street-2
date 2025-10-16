@@ -22,6 +22,7 @@ import {
   PAYMENT_METHODS
 } from "@/lib/razorpay";
 import { fetchProductGroups } from "@/lib/productGroupApi";
+import { supabase } from "@/lib/supabase";
 
 const VendorDashboard = () => {
   const { user, logout } = useAuth();
@@ -1061,23 +1062,21 @@ const VendorDashboard = () => {
     }));
   };
 
-  // Fetch product groups from backend
+  // Fetch product groups with real-time updates
   useEffect(() => {
     const loadGroups = async () => {
       try {
         console.log('🔄 Loading product groups from backend...');
         const groups = await fetchProductGroups();
         console.log('📥 Raw groups from backend:', groups);
-        
+
         const mappedGroups = groups.map(mapGroupData);
         setGroupOrders(mappedGroups);
         console.log('✅ Mapped product groups:', mappedGroups);
-        
-        // Check if any groups have created_by field
+
         const groupsWithCreatedBy = mappedGroups.filter(g => g.created_by);
         console.log('👥 Groups with created_by field:', groupsWithCreatedBy);
-        
-        // Transform groups into individual suppliers
+
         const suppliers = transformGroupsToSuppliers(groups);
         setIndividualSuppliers(suppliers);
         console.log('👨‍💼 Individual suppliers:', suppliers);
@@ -1090,8 +1089,29 @@ const VendorDashboard = () => {
         });
       }
     };
+
     loadGroups();
-  }, []);
+
+    const subscription = supabase
+      .channel('vendor_product_groups_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'product_groups'
+        },
+        (payload) => {
+          console.log('Product group change detected for vendor:', payload);
+          loadGroups();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [toast]);
 
   const [groupOrders, setGroupOrders] = useState<any[]>([]);
 
