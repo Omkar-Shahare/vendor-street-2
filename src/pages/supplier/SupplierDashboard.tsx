@@ -17,28 +17,43 @@ import Footer from "@/components/Footer";
 const SupplierDashboard = () => {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("group");
+  const [activeTab, setActiveTab] = useState("products");
   const [showGroupModal, setShowGroupModal] = useState(false);
-  const [newGroup, setNewGroup] = useState({ 
-    product: "", 
-    quantity: "", 
+  const [showProductModal, setShowProductModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [newGroup, setNewGroup] = useState({
+    product: "",
+    quantity: "",
     actualRate: "",
     finalRate: "",
     discountPercentage: "",
-    location: "", 
-    deadline: "", 
+    location: "",
+    deadline: "",
     deadlineTime: "",
     latitude: "",
     longitude: ""
   });
   const [showProfileEditModal, setShowProfileEditModal] = useState(false);
   const [showHamburgerMenu, setShowHamburgerMenu] = useState(false);
-  
+
   // Supplier profile data states
   const [supplierData, setSupplierData] = useState<SupplierProfile | null>(null);
   const [editFormData, setEditFormData] = useState<SupplierProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
-  
+
+  // Products state
+  const [products, setProducts] = useState([]);
+  const [productForm, setProductForm] = useState({
+    name: "",
+    category: "",
+    unit: "kg",
+    price_per_unit: "",
+    min_order_quantity: "1",
+    stock_available: true,
+    description: "",
+    image_url: ""
+  });
+
   // Location-based functionality states
   const [currentLocation, setCurrentLocation] = useState(null);
   const [locationPermission, setLocationPermission] = useState(null);
@@ -46,10 +61,10 @@ const SupplierDashboard = () => {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [autoFillLocation, setAutoFillLocation] = useState(true);
   const [groupSearch, setGroupSearch] = useState("");
-  
+
   const { toast } = useToast();
   const [groupRequests, setGroupRequests] = useState<any[]>([]);
-  
+
   // Orders state
   const [individualOrders, setIndividualOrders] = useState([]);
   const [confirmedOrders, setConfirmedOrders] = useState([]);
@@ -577,6 +592,178 @@ const SupplierDashboard = () => {
     };
   }, [supplierData, toast]);
 
+  // Fetch products with real-time updates
+  useEffect(() => {
+    if (!supplierData?.id) {
+      return;
+    }
+
+    const fetchProducts = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .eq('supplier_id', supplierData.id)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        setProducts(data || []);
+      } catch (error) {
+        console.error('Error fetching products:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load products.",
+          variant: "destructive"
+        });
+      }
+    };
+
+    fetchProducts();
+
+    const subscription = supabase
+      .channel('products_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'products',
+          filter: `supplier_id=eq.${supplierData.id}`
+        },
+        (payload) => {
+          console.log('Product change detected:', payload);
+          fetchProducts();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [supplierData, toast]);
+
+  // Product handlers
+  const handleAddProduct = async () => {
+    if (!supplierData?.id) {
+      toast({
+        title: "Error",
+        description: "Supplier profile not found.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (!productForm.name || !productForm.category || !productForm.price_per_unit) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in all required fields.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const productData = {
+        supplier_id: supplierData.id,
+        name: productForm.name,
+        category: productForm.category,
+        unit: productForm.unit,
+        price_per_unit: parseFloat(productForm.price_per_unit),
+        min_order_quantity: parseFloat(productForm.min_order_quantity),
+        stock_available: productForm.stock_available,
+        description: productForm.description || null,
+        image_url: productForm.image_url || null
+      };
+
+      if (editingProduct) {
+        const { error } = await supabase
+          .from('products')
+          .update(productData)
+          .eq('id', editingProduct.id);
+
+        if (error) throw error;
+
+        toast({
+          title: "Success",
+          description: "Product updated successfully.",
+        });
+      } else {
+        const { error } = await supabase
+          .from('products')
+          .insert([productData]);
+
+        if (error) throw error;
+
+        toast({
+          title: "Success",
+          description: "Product added successfully.",
+        });
+      }
+
+      setShowProductModal(false);
+      setEditingProduct(null);
+      setProductForm({
+        name: "",
+        category: "",
+        unit: "kg",
+        price_per_unit: "",
+        min_order_quantity: "1",
+        stock_available: true,
+        description: "",
+        image_url: ""
+      });
+    } catch (error) {
+      console.error('Error saving product:', error);
+      toast({
+        title: "Error",
+        description: "Failed to save product.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleEditProduct = (product) => {
+    setEditingProduct(product);
+    setProductForm({
+      name: product.name,
+      category: product.category,
+      unit: product.unit,
+      price_per_unit: product.price_per_unit.toString(),
+      min_order_quantity: product.min_order_quantity.toString(),
+      stock_available: product.stock_available,
+      description: product.description || "",
+      image_url: product.image_url || ""
+    });
+    setShowProductModal(true);
+  };
+
+  const handleDeleteProduct = async (productId) => {
+    if (!confirm('Are you sure you want to delete this product?')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('products')
+        .delete()
+        .eq('id', productId);
+
+      if (error) throw error;
+
+      toast({
+        title: "Success",
+        description: "Product deleted successfully.",
+      });
+    } catch (error) {
+      console.error('Error deleting product:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete product.",
+        variant: "destructive"
+      });
+    }
+  };
+
   return (
     <>
       <Navbar />
@@ -662,11 +849,108 @@ const SupplierDashboard = () => {
       <div className="container mx-auto px-4 py-6">
         {/* Orders Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3 bg-white p-1 rounded-lg border shadow-sm">
-              <TabsTrigger value="group" className="data-[state=active]:bg-blue-500 data-[state=active]:text-white">Group Requests</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-4 bg-white p-1 rounded-lg border shadow-sm">
+              <TabsTrigger value="products" className="data-[state=active]:bg-orange-500 data-[state=active]:text-white">My Products</TabsTrigger>
+              <TabsTrigger value="group" className="data-[state=active]:bg-blue-500 data-[state=active]:text-white">Product Groups</TabsTrigger>
               <TabsTrigger value="individual" className="data-[state=active]:bg-green-500 data-[state=active]:text-white">My Orders</TabsTrigger>
               <TabsTrigger value="confirmed" className="data-[state=active]:bg-purple-500 data-[state=active]:text-white">Order History</TabsTrigger>
-            </TabsList>          <TabsContent value="group" className="space-y-4">
+            </TabsList>
+
+          {/* My Products Tab */}
+          <TabsContent value="products" className="space-y-4">
+            <div className="bg-orange-500 text-white rounded-lg p-6 mb-6">
+              <h2 className="text-2xl font-bold mb-2">My Products</h2>
+              <p className="text-orange-100 mb-4">Manage your product catalog. Products listed here will be visible to all vendors.</p>
+              <div className="flex justify-end">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setEditingProduct(null);
+                    setProductForm({
+                      name: "",
+                      category: "",
+                      unit: "kg",
+                      price_per_unit: "",
+                      min_order_quantity: "1",
+                      stock_available: true,
+                      description: "",
+                      image_url: ""
+                    });
+                    setShowProductModal(true);
+                  }}
+                  className="bg-white/20 text-white border-white/30 hover:bg-white/30 hover:text-white"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Product
+                </Button>
+              </div>
+            </div>
+
+            {products.length === 0 ? (
+              <div className="text-center py-12">
+                <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-600 mb-2">No Products Listed</h3>
+                <p className="text-gray-500 mb-4">
+                  Add your first product to start selling to vendors on the platform.
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowProductModal(true)}
+                  className="flex items-center gap-2 mx-auto"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Product
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {products.map((product) => (
+                  <div key={product.id} className="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow p-4">
+                    <div className="mb-3">
+                      <div className="w-full h-32 bg-orange-100 rounded-lg flex items-center justify-center mb-3">
+                        <Package className="w-12 h-12 text-orange-600" />
+                      </div>
+                    </div>
+                    <div className="font-semibold text-lg text-gray-900">{product.name}</div>
+                    <div className="text-gray-600 text-sm mb-2">{product.category}</div>
+                    {product.description && (
+                      <div className="text-gray-500 text-xs mb-2 line-clamp-2">{product.description}</div>
+                    )}
+                    <div className="text-orange-600 font-bold text-lg mb-1">₹{product.price_per_unit}/{product.unit}</div>
+                    <div className="flex items-center text-xs text-gray-500 mb-2">
+                      <span>Min Order: {product.min_order_quantity} {product.unit}</span>
+                    </div>
+                    <div className="flex items-center text-xs mb-3">
+                      <span className={`px-2 py-0.5 rounded text-xs ${product.stock_available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {product.stock_available ? 'In Stock' : 'Out of Stock'}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => handleEditProduct(product)}
+                      >
+                        <Edit className="w-3 h-3 mr-1" />
+                        Edit
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        onClick={() => handleDeleteProduct(product.id)}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="group" className="space-y-4">
             <div className="bg-blue-500 text-white rounded-lg p-6 mb-6">
               <h2 className="text-2xl font-bold mb-2">Group Order Requests</h2>
               <p className="text-blue-100 mb-4">Manage incoming group order requests from vendors</p>
@@ -1562,7 +1846,150 @@ const SupplierDashboard = () => {
           </div>
         </div>
       )}
-      
+
+      {/* Add/Edit Product Modal */}
+      {showProductModal && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl border max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-6">
+              <h2 className="text-2xl font-semibold">{editingProduct ? 'Edit Product' : 'Add New Product'}</h2>
+              <button
+                onClick={() => {
+                  setShowProductModal(false);
+                  setEditingProduct(null);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Product Name *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Fresh Onions"
+                    value={productForm.name}
+                    onChange={e => setProductForm({ ...productForm, name: e.target.value })}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">Category *</label>
+                  <select
+                    value={productForm.category}
+                    onChange={e => setProductForm({ ...productForm, category: e.target.value })}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="">Select Category</option>
+                    <option value="Vegetables">Vegetables</option>
+                    <option value="Fruits">Fruits</option>
+                    <option value="Spices">Spices</option>
+                    <option value="Grains">Grains</option>
+                    <option value="Dairy">Dairy</option>
+                    <option value="Oil">Oil</option>
+                    <option value="Meat">Meat</option>
+                    <option value="Flour">Flour</option>
+                    <option value="Sugar">Sugar</option>
+                    <option value="Salt">Salt</option>
+                    <option value="Packaging">Packaging</option>
+                    <option value="Equipment">Equipment</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Price per Unit (₹) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="e.g., 25.50"
+                    value={productForm.price_per_unit}
+                    onChange={e => setProductForm({ ...productForm, price_per_unit: e.target.value })}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">Unit</label>
+                  <select
+                    value={productForm.unit}
+                    onChange={e => setProductForm({ ...productForm, unit: e.target.value })}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="kg">kg</option>
+                    <option value="g">g</option>
+                    <option value="liter">liter</option>
+                    <option value="piece">piece</option>
+                    <option value="dozen">dozen</option>
+                    <option value="packet">packet</option>
+                    <option value="box">box</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">Min Order Quantity</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="e.g., 10"
+                    value={productForm.min_order_quantity}
+                    onChange={e => setProductForm({ ...productForm, min_order_quantity: e.target.value })}
+                    className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Description</label>
+                <textarea
+                  placeholder="Describe your product..."
+                  rows={3}
+                  value={productForm.description}
+                  onChange={e => setProductForm({ ...productForm, description: e.target.value })}
+                  className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={productForm.stock_available}
+                    onChange={e => setProductForm({ ...productForm, stock_available: e.target.checked })}
+                    className="w-4 h-4 text-orange-600"
+                  />
+                  <span className="text-sm font-medium">Stock Available</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowProductModal(false);
+                  setEditingProduct(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-orange-600 hover:bg-orange-700 text-white"
+                onClick={handleAddProduct}
+              >
+                {editingProduct ? 'Update Product' : 'Add Product'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Location Settings Modal */}
       {showLocationModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">

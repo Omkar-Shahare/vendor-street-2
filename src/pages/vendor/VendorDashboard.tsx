@@ -91,6 +91,11 @@ const VendorDashboard = () => {
   const [vendorOrders, setVendorOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
 
+  // Products state - for Browse Suppliers tab
+  const [allProducts, setAllProducts] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+
   // Auto-detect location on component mount
   useEffect(() => {
     checkLocationPermission();
@@ -299,6 +304,98 @@ const VendorDashboard = () => {
       fetchVendorOrders();
     }
   }, [vendorProfile]);
+
+  // Fetch all products and suppliers with real-time updates
+  useEffect(() => {
+    const fetchProductsAndSuppliers = async () => {
+      try {
+        setProductsLoading(true);
+
+        // Fetch all products with supplier information
+        const { data: productsData, error: productsError } = await supabase
+          .from('products')
+          .select(`
+            *,
+            suppliers (
+              id,
+              business_name,
+              owner_name,
+              phone,
+              email,
+              city,
+              state,
+              rating,
+              total_reviews
+            )
+          `)
+          .eq('stock_available', true)
+          .order('created_at', { ascending: false });
+
+        if (productsError) throw productsError;
+        setAllProducts(productsData || []);
+
+        // Fetch all suppliers
+        const { data: suppliersData, error: suppliersError } = await supabase
+          .from('suppliers')
+          .select('*')
+          .order('business_name', { ascending: true });
+
+        if (suppliersError) throw suppliersError;
+        setSuppliers(suppliersData || []);
+
+        setProductsLoading(false);
+      } catch (error) {
+        console.error('Error fetching products and suppliers:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load suppliers and products.",
+          variant: "destructive"
+        });
+        setProductsLoading(false);
+      }
+    };
+
+    fetchProductsAndSuppliers();
+
+    // Real-time subscription for products
+    const productsSubscription = supabase
+      .channel('all_products_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'products'
+        },
+        (payload) => {
+          console.log('Product change detected:', payload);
+          fetchProductsAndSuppliers();
+        }
+      )
+      .subscribe();
+
+    // Real-time subscription for suppliers
+    const suppliersSubscription = supabase
+      .channel('all_suppliers_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'suppliers'
+        },
+        (payload) => {
+          console.log('Supplier change detected:', payload);
+          fetchProductsAndSuppliers();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      productsSubscription.unsubscribe();
+      suppliersSubscription.unsubscribe();
+    };
+  }, [toast]);
 
   const checkLocationPermission = async () => {
     if (!navigator.geolocation) {
@@ -1349,90 +1446,77 @@ const VendorDashboard = () => {
               )}
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-              {getFilteredSuppliers().map(supplier => {
-                const distanceText = getSupplierDistanceText(supplier);
-                const inDeliveryRange = isSupplierInDeliveryRange(supplier);
-                
-                return (
-                  <div key={supplier.id} className="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow p-4">
-                    <img src={supplier.image} alt={supplier.name} className="h-40 w-full object-cover rounded-lg mb-3" />
-                    <div className="font-semibold text-lg text-gray-900">{supplier.product}</div>
-                    <div className="text-gray-600 text-sm">{supplier.name}</div>
-                    <div className="flex items-center text-xs text-gray-500 mt-1 mb-2">
-                      <span>{supplier.location}</span>
-                      {supplier.verified && <span className="ml-2 bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">Verified</span>}
-                    </div>
-                    
-                    {/* Location and Delivery Info */}
-                    {currentLocation && (
-                      <div className="mb-2">
-                        {distanceText && (
-                          <div className="flex items-center text-xs text-gray-500 mb-1">
-                            <MapPin className="w-3 h-3 mr-1" />
-                            <span>{distanceText}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center text-xs mb-1">
-                          {inDeliveryRange ? (
-                            <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded flex items-center gap-1">
-                              <Truck className="w-3 h-3" />
-                              Delivers (₹{supplier.deliveryCharge})
-                            </span>
-                          ) : (
-                            <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs">
-                              Outside delivery area
-                            </span>
-                          )}
+            {productsLoading ? (
+              <div className="col-span-full text-center py-12">
+                <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-gray-600">Loading products...</p>
+              </div>
+            ) : allProducts.length === 0 ? (
+              <div className="col-span-full text-center py-12">
+                <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-600 mb-2">No Products Available</h3>
+                <p className="text-gray-500">Suppliers haven't listed any products yet.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {allProducts
+                  .filter(product => {
+                    const searchTerm = supplierSearch.toLowerCase();
+                    return (
+                      product.name.toLowerCase().includes(searchTerm) ||
+                      product.category.toLowerCase().includes(searchTerm) ||
+                      product.suppliers?.business_name?.toLowerCase().includes(searchTerm) ||
+                      product.suppliers?.city?.toLowerCase().includes(searchTerm)
+                    );
+                  })
+                  .map(product => (
+                    <div key={product.id} className="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow p-4">
+                      <div className="mb-3">
+                        <div className="w-full h-32 bg-blue-100 rounded-lg flex items-center justify-center mb-3">
+                          <Package className="w-12 h-12 text-blue-600" />
                         </div>
                       </div>
-                    )}
-                    
-                    <div className="text-blue-600 font-bold text-lg mb-1">{supplier.price}</div>
-                    <div className="flex items-center text-xs text-gray-500 mb-3">
-                      <span>Member: {supplier.memberYears} yrs</span>
-                      <span className="ml-2">⭐ {supplier.rating}</span>
+                      <div className="font-semibold text-lg text-gray-900">{product.name}</div>
+                      <div className="text-gray-600 text-sm mb-1">{product.category}</div>
+                      {product.description && (
+                        <div className="text-gray-500 text-xs mb-2 line-clamp-2">{product.description}</div>
+                      )}
+                      <div className="text-blue-600 font-bold text-lg mb-1">₹{product.price_per_unit}/{product.unit}</div>
+                      <div className="flex items-center text-xs text-gray-500 mb-2">
+                        <span>Min Order: {product.min_order_quantity} {product.unit}</span>
+                      </div>
+
+                      {product.suppliers && (
+                        <div className="border-t pt-2 mt-2">
+                          <div className="text-sm font-medium text-gray-700 mb-1">Supplier</div>
+                          <div className="text-sm text-gray-600">{product.suppliers.business_name}</div>
+                          <div className="flex items-center text-xs text-gray-500 mt-1">
+                            <MapPin className="w-3 h-3 mr-1" />
+                            <span>{product.suppliers.city}, {product.suppliers.state}</span>
+                          </div>
+                          {product.suppliers.rating > 0 && (
+                            <div className="flex items-center text-xs text-gray-500 mt-1">
+                              <Star className="w-3 h-3 mr-1 text-yellow-500 fill-yellow-500" />
+                              <span>{product.suppliers.rating} ({product.suppliers.total_reviews} reviews)</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full mt-3"
+                        onClick={() => {
+                          if (product.suppliers) {
+                            navigate(`/vendor/supplier/${product.suppliers.id}`);
+                          }
+                        }}
+                      >
+                        View Details
+                      </Button>
                     </div>
-                    <button 
-                      className={`w-full py-2 rounded-lg font-medium transition-colors ${
-                        currentLocation && !inDeliveryRange 
-                          ? 'bg-gray-400 text-white cursor-not-allowed' 
-                          : 'bg-blue-600 hover:bg-blue-700 text-white'
-                      }`}
-                      onClick={() => handleOrderNow(supplier)}
-                      disabled={currentLocation && !inDeliveryRange}
-                    >
-                      {currentLocation && !inDeliveryRange ? 'No Delivery' : 'Order Now'}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            
-            {getFilteredSuppliers().length === 0 && (
-              <div className="text-center py-12">
-                <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-600 mb-2">No Suppliers Found</h3>
-                <p className="text-gray-500 mb-4">
-                  {supplierLocationFilter === "nearby" && !currentLocation 
-                    ? "Enable location detection to find nearby suppliers."
-                    : supplierLocationFilter === "delivery" && !currentLocation
-                    ? "Set your location to see suppliers that deliver to you."
-                    : supplierSearch 
-                    ? "Try adjusting your search or location filters."
-                    : "No suppliers match your criteria."}
-                </p>
-                {(supplierLocationFilter === "nearby" || supplierLocationFilter === "delivery") && !currentLocation && (
-                  <Button
-                    variant="outline"
-                    onClick={detectCurrentLocation}
-                    disabled={isDetectingLocation}
-                    className="flex items-center gap-2 mx-auto"
-                  >
-                    <Navigation className="w-4 h-4" />
-                    {isDetectingLocation ? "Detecting..." : "Set My Location"}
-                  </Button>
-                )}
+                  ))}
               </div>
             )}
           </TabsContent>
